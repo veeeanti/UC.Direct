@@ -456,6 +456,25 @@ declare global {
         controllerName: string | null
         controllerType: string | null
       }>
+      onControllerInput: (callback: (states: Array<{
+        slot: number
+        connected: boolean
+        buttons: boolean[]
+        axes: number[]
+      }>) => void) => () => void
+      onControllerConnected: (callback: (data: { slot: number; controllerId: string; controllerName: string; controllerType: string }) => void) => () => void
+      onControllerDisconnected: (callback: (data: { slot: number }) => void) => () => void
+    }
+    ucProtocol?: {
+      getPending: () => Promise<{ action: string; appid?: string | null; page?: string | null; params?: string[] } | null>
+      onNavigate: (callback: (nav: { action: string; appid?: string | null; page?: string | null; params?: string[] }) => void) => () => void
+    }
+    ucAchievements?: {
+      watch: (appid: string) => Promise<{ ok: boolean }>
+      unwatch: (appid: string) => Promise<{ ok: boolean }>
+      getKnown: (appid: string) => Promise<{ ok: boolean; achievements: Record<string, { earned: boolean; earnedAt: number | null; displayName: string; description: string }> }>
+      findFiles: (appid: string) => Promise<{ files: string[] }>
+      onUnlocked: (callback: (data: { appid: string; name: string; displayName: string; description: string; unlockedAt: number }) => void) => () => void
     }
     ucSystem?: {
       getVolume: () => Promise<{ ok: boolean; volume: number }>

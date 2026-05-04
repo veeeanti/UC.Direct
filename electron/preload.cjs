@@ -297,6 +297,29 @@ contextBridge.exposeInMainWorld('ucController', {
   setOverlaySettings: (settings) => ipcRenderer.invoke('uc:controller-set-overlay-settings', settings),
 })
 
+// union:// Protocol Handler API
+contextBridge.exposeInMainWorld('ucProtocol', {
+  getPending: () => ipcRenderer.invoke('uc:protocol-get-pending'),
+  onNavigate: (callback) => {
+    const listener = (_event, data) => callback(data)
+    ipcRenderer.on('uc:protocol-navigate', listener)
+    return () => ipcRenderer.removeListener('uc:protocol-navigate', listener)
+  },
+})
+
+// Achievement Watcher API
+contextBridge.exposeInMainWorld('ucAchievements', {
+  watch: (appid) => ipcRenderer.invoke('uc:achievements-watch', appid),
+  unwatch: (appid) => ipcRenderer.invoke('uc:achievements-unwatch', appid),
+  getKnown: (appid) => ipcRenderer.invoke('uc:achievements-get-known', appid),
+  findFiles: (appid) => ipcRenderer.invoke('uc:achievements-find-files', appid),
+  onUnlocked: (callback) => {
+    const listener = (_event, data) => callback(data)
+    ipcRenderer.on('uc:achievement-unlocked', listener)
+    return () => ipcRenderer.removeListener('uc:achievement-unlocked', listener)
+  },
+})
+
 // System Notifications API
 contextBridge.exposeInMainWorld('ucSystem', {
   // Volume control

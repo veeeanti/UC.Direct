@@ -90,6 +90,70 @@ try {
   if (typeof app.setName === 'function') app.setName('UnionCrax.Direct')
   else app.name = 'UnionCrax.Direct'
 } catch { }
+
+// Register union:// as a custom URL protocol (like Steam's steam:// scheme)
+// Handles: union://run/<appid>   → open game page + launch/download
+//          union://store/<appid> → open game detail page
+//          union://open/<page>   → navigate to app section
+try {
+  if (!app.isDefaultProtocolClient('union')) {
+    app.setAsDefaultProtocolClient('union')
+  }
+} catch { }
+
+// Holds a protocol URL received before the main window is ready
+let pendingProtocolUrl = null
+
+function parseUnionProtocolUrl(raw) {
+  try {
+    const parsed = new URL(raw)
+    if (parsed.protocol !== 'union:') return null
+    // URL format: union://action/param  →  hostname=action, pathname=/param
+    const action = parsed.hostname
+    const pathParts = parsed.pathname.replace(/^\//, '').split('/').filter(Boolean)
+    switch (action) {
+      case 'run':
+        return { action: 'run', appid: pathParts[0] || null }
+      case 'store':
+        return { action: 'store', appid: pathParts[0] || null }
+      case 'open':
+        return { action: 'open', page: pathParts[0] || null }
+      default:
+        return { action, params: pathParts }
+    }
+  } catch {
+    return null
+  }
+}
+
+function dispatchProtocolUrl(raw) {
+  if (!raw || typeof raw !== 'string') return
+  const nav = parseUnionProtocolUrl(raw)
+  if (!nav) return
+  ucLog(`union:// protocol dispatch: ${JSON.stringify(nav)}`)
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      if (!mainWindow.isVisible()) mainWindow.show()
+      mainWindow.setAlwaysOnTop(true)
+      mainWindow.focus()
+      mainWindow.setAlwaysOnTop(false)
+      mainWindow.webContents.send('uc:protocol-navigate', nav)
+    } catch (e) {
+      ucLog(`Protocol dispatch error: ${e?.message}`, 'warn')
+      pendingProtocolUrl = nav
+    }
+  } else {
+    pendingProtocolUrl = nav
+  }
+}
+
+// macOS sends protocol URLs via open-url before app.on('ready')
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  dispatchProtocolUrl(url)
+})
+
 const pendingDownloads = []
 let lastPixeldrainDownloadTime = 0
 const PIXELDRAIN_DELAY_MS = 2000 // 2 second delay between pixeldrain downloads to avoid rate limiting
@@ -1279,6 +1343,9 @@ app.on('will-quit', () => {
   if (nativeOverlay && typeof nativeOverlay.gcpadUnload === 'function') {
     nativeOverlay.gcpadUnload()
   }
+  for (const appid of [...achievementWatchers.keys()]) {
+    unwatchAchievementsForAppid(appid)
+  }
 })
 
 const OVERLAY_FRAME_WIDTH = 1920
@@ -1972,6 +2039,15 @@ if (!gotTheLock) {
   app.quit()
 } else {
   app.on('second-instance', (event, argv) => {
+    // Windows passes protocol URLs as command-line arguments in second instances
+    if (argv && Array.isArray(argv)) {
+      const protocolArg = argv.find(arg => String(arg).toLowerCase().startsWith('union://'))
+      if (protocolArg) {
+        dispatchProtocolUrl(protocolArg)
+        return
+      }
+    }
+
     // Check if this second instance is from the setup/installer
     let isSetupRun = false
     if (argv && Array.isArray(argv)) {
@@ -2620,6 +2696,214 @@ async function getDiscordSession(session, baseUrl) {
     return { discordId: null }
   }
 }
+
+// ============================================================
+// Union Protocol IPC
+// ============================================================
+
+ipcMain.handle('uc:protocol-get-pending', () => {
+  const nav = pendingProtocolUrl
+  pendingProtocolUrl = null
+  return nav
+})
+
+// ============================================================
+// Achievement Watcher
+// ============================================================
+// Watches Goldberg SteamEmu saves and real Steam userdata for
+// achievement unlocks, then broadcasts them to the renderer.
+//
+// Goldberg format: %APPDATA%\Goldberg SteamEmu Saves\<id>\<appid>\achievements.json
+// Steam userdata:  <steam>\userdata\<id>\<appid>\stats\
+// ============================================================
+
+const achievementWatchers = new Map()  // appid → { watchers, knownState }
+
+function findSteamPath() {
+  if (process.platform !== 'win32') return null
+  const candidates = [
+    path.join('C:', 'Program Files (x86)', 'Steam'),
+    path.join('C:', 'Program Files', 'Steam'),
+    process.env.PROGRAMFILES && path.join(process.env.PROGRAMFILES, 'Steam'),
+    process.env['PROGRAMFILES(X86)'] && path.join(process.env['PROGRAMFILES(X86)'], 'Steam'),
+  ].filter(Boolean)
+  for (const c of candidates) {
+    if (fs.existsSync(path.join(c, 'steam.exe'))) return c
+  }
+  return null
+}
+
+function findGoldbergSaveDirs() {
+  const dirs = []
+  if (process.platform === 'win32') {
+    const base = process.env.APPDATA
+    if (base) {
+      const goldDir = path.join(base, 'Goldberg SteamEmu Saves')
+      if (fs.existsSync(goldDir)) dirs.push(goldDir)
+    }
+    const local = process.env.LOCALAPPDATA
+    if (local) {
+      const goldLocal = path.join(local, 'Goldberg SteamEmu Saves')
+      if (fs.existsSync(goldLocal)) dirs.push(goldLocal)
+    }
+  } else if (process.platform === 'linux') {
+    const home = process.env.HOME
+    if (home) {
+      dirs.push(path.join(home, '.local', 'share', 'Goldberg SteamEmu Saves'))
+    }
+  }
+  return dirs
+}
+
+function findAchievementFiles(appid) {
+  const files = []
+  const appidStr = String(appid)
+
+  // Goldberg saves
+  for (const dir of findGoldbergSaveDirs()) {
+    try {
+      const idDirs = fs.readdirSync(dir)
+      for (const id of idDirs) {
+        const achFile = path.join(dir, id, appidStr, 'achievements.json')
+        if (fs.existsSync(achFile)) files.push(achFile)
+      }
+    } catch { }
+    // Some Goldberg configs store directly under appid
+    const direct = path.join(dir, appidStr, 'achievements.json')
+    if (fs.existsSync(direct)) files.push(direct)
+  }
+
+  // Steam userdata
+  const steamPath = findSteamPath()
+  if (steamPath) {
+    const userdataDir = path.join(steamPath, 'userdata')
+    try {
+      const ids = fs.readdirSync(userdataDir)
+      for (const id of ids) {
+        const statsDir = path.join(userdataDir, id, appidStr, 'stats')
+        if (fs.existsSync(statsDir)) {
+          // Binary VDF — watch for modification; we'll read unlock count via dir mtime
+          files.push({ type: 'steam-stats', dir: statsDir })
+        }
+      }
+    } catch { }
+  }
+
+  return files
+}
+
+function parseGoldbergAchievements(filePath) {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8')
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+function broadcastAchievement(appid, achievement) {
+  const payload = { appid, ...achievement }
+  BrowserWindow.getAllWindows().forEach((win) => {
+    try { win.webContents.send('uc:achievement-unlocked', payload) } catch { }
+  })
+  ucLog(`Achievement unlocked: [${appid}] ${achievement.name} — ${achievement.displayName || ''}`)
+}
+
+function watchAchievementsForAppid(appid) {
+  if (achievementWatchers.has(appid)) return
+  const files = findAchievementFiles(appid)
+  if (!files.length) return
+
+  const state = { watchers: [], knownState: new Map() }
+
+  for (const entry of files) {
+    if (typeof entry === 'string') {
+      // Goldberg JSON file
+      const initial = parseGoldbergAchievements(entry)
+      if (initial) {
+        const snapshot = {}
+        for (const [key, val] of Object.entries(initial)) {
+          snapshot[key] = Boolean(val?.earned)
+        }
+        state.knownState.set(entry, snapshot)
+      }
+
+      try {
+        const watcher = fs.watch(entry, { persistent: false }, () => {
+          const parsed = parseGoldbergAchievements(entry)
+          if (!parsed) return
+          const prev = state.knownState.get(entry) || {}
+          for (const [key, val] of Object.entries(parsed)) {
+            if (val?.earned && !prev[key]) {
+              broadcastAchievement(appid, {
+                name: key,
+                displayName: val.displayName || key,
+                description: val.description || '',
+                unlockedAt: val.earned_time ? val.earned_time * 1000 : Date.now(),
+              })
+            }
+          }
+          const newSnapshot = {}
+          for (const [key, val] of Object.entries(parsed)) {
+            newSnapshot[key] = Boolean(val?.earned)
+          }
+          state.knownState.set(entry, newSnapshot)
+        })
+        state.watchers.push(watcher)
+      } catch { }
+    }
+  }
+
+  if (state.watchers.length) achievementWatchers.set(appid, state)
+}
+
+function unwatchAchievementsForAppid(appid) {
+  const state = achievementWatchers.get(appid)
+  if (!state) return
+  for (const w of state.watchers) {
+    try { w.close() } catch { }
+  }
+  achievementWatchers.delete(appid)
+}
+
+ipcMain.handle('uc:achievements-watch', (_event, appid) => {
+  if (!appid) return { ok: false }
+  watchAchievementsForAppid(String(appid))
+  return { ok: true }
+})
+
+ipcMain.handle('uc:achievements-unwatch', (_event, appid) => {
+  if (!appid) return { ok: false }
+  unwatchAchievementsForAppid(String(appid))
+  return { ok: true }
+})
+
+ipcMain.handle('uc:achievements-get-known', (_event, appid) => {
+  if (!appid) return { ok: false, achievements: {} }
+  const files = findAchievementFiles(String(appid))
+  const result = {}
+  for (const entry of files) {
+    if (typeof entry === 'string') {
+      const parsed = parseGoldbergAchievements(entry)
+      if (parsed) {
+        for (const [key, val] of Object.entries(parsed)) {
+          result[key] = {
+            earned: Boolean(val?.earned),
+            earnedAt: val?.earned_time ? val.earned_time * 1000 : null,
+            displayName: val?.displayName || key,
+            description: val?.description || '',
+          }
+        }
+      }
+    }
+  }
+  return { ok: true, achievements: result }
+})
+
+ipcMain.handle('uc:achievements-find-files', (_event, appid) => {
+  const files = findAchievementFiles(String(appid || ''))
+  return { files: files.map(f => typeof f === 'string' ? f : f.dir) }
+})
 
 // IPC: simple settings get/set with broadcast when changed
 ipcMain.handle('uc:setting-get', (_event, key) => {
@@ -7136,6 +7420,15 @@ function createWindow(existingSplash) {
 }
 
 app.whenReady().then(async () => {
+  // Check if launched directly via protocol URL (first instance, Windows)
+  if (process.platform === 'win32' && process.argv) {
+    const protocolArg = process.argv.find(arg => String(arg).toLowerCase().startsWith('union://'))
+    if (protocolArg) {
+      const nav = parseUnionProtocolUrl(protocolArg)
+      if (nav) pendingProtocolUrl = nav
+    }
+  }
+
   ensureDownloadDir()
   await hydratePersistedLauncherState()
 

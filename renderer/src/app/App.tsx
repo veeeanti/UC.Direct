@@ -13,6 +13,7 @@ import { AccountOverviewPage } from "@/app/pages/AccountOverviewPage"
 import { ViewHistoryPage } from "@/app/pages/ViewHistoryPage"
 import { SearchHistoryPage } from "@/app/pages/SearchHistoryPage"
 import { ScreenshotsPage } from "@/app/pages/ScreenshotsPage"
+import { AchievementsPage } from "@/app/pages/AchievementsPage"
 import { LoginPage } from "@/app/pages/LoginPage"
 import { VerifyEmailPage } from "@/app/pages/VerifyEmailPage"
 import { ForgotPasswordPage } from "@/app/pages/ForgotPasswordPage"
@@ -21,6 +22,9 @@ import { DownloadsProvider, useDownloads } from "@/context/downloads-context"
 import { ToastProvider } from "@/context/toast-context"
 import { InGameOverlay } from "@/components/InGameOverlay"
 import { Toaster } from "@/components/Toaster"
+import { AchievementNotificationHost, useAchievementWatcherForRunningGame } from "@/components/AchievementNotification"
+import { useProtocolNav } from "@/hooks/use-protocol-nav"
+import { useControllerNav } from "@/hooks/use-controller-nav"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { AlertTriangle } from "lucide-react"
@@ -87,11 +91,20 @@ function ExtractionCloseGuard() {
   )
 }
 
+function AppNavAndFeatures() {
+  useProtocolNav()
+  useControllerNav()
+  useAchievementWatcherForRunningGame()
+  return null
+}
+
 function AppWithDownloads() {
   return (
     <>
       <ExtractionCloseGuard />
+      <AppNavAndFeatures />
       <AppLayout />
+      <AchievementNotificationHost />
     </>
   )
 }
@@ -125,6 +138,8 @@ export default function App() {
               <Route path="/view-history" element={<ViewHistoryPage />} />
               <Route path="/search-history" element={<SearchHistoryPage />} />
               <Route path="/screenshots" element={<ScreenshotsPage />} />
+              <Route path="/achievements" element={<AchievementsPage />} />
+              <Route path="/achievements/:appid" element={<AchievementsPage />} />
             </Route>
 
             {/* Fallback */}
