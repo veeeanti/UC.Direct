@@ -300,6 +300,7 @@ contextBridge.exposeInMainWorld('ucController', {
 // union:// Protocol Handler API
 contextBridge.exposeInMainWorld('ucProtocol', {
   getPending: () => ipcRenderer.invoke('uc:protocol-get-pending'),
+  invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
   onNavigate: (callback) => {
     const listener = (_event, data) => callback(data)
     ipcRenderer.on('uc:protocol-navigate', listener)
@@ -318,6 +319,8 @@ contextBridge.exposeInMainWorld('ucAchievements', {
     ipcRenderer.on('uc:achievement-unlocked', listener)
     return () => ipcRenderer.removeListener('uc:achievement-unlocked', listener)
   },
+  getSteamDefinitions: (appid) => ipcRenderer.invoke("uc:achievements-get-steam-definitions", appid),
+  getSteamProfile: (steamId) => ipcRenderer.invoke("uc:achievements-get-steam-profile", steamId),
 })
 
 // System Notifications API

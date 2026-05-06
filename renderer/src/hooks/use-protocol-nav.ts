@@ -39,21 +39,45 @@ export function useProtocolNav() {
   useEffect(() => {
     if (!window.ucProtocol) return
 
-    const dispatch = (nav: ProtocolNav | null) => {
+    const handleRunAction = async (appid: string) => {
+      try {
+        const result = await (window as any).electron?.invoke?.('uc:protocol-navigate-enhanced', 'union://run/' + appid)
+        if (result && result.handled) {
+          if (result.status === 'running') {
+            navigate('/game/' + result.appid, { state: { autoLaunch: false } })
+            return
+          }
+          if (result.status === 'installed') {
+            navigate('/game/' + result.appid, { state: { autoLaunch: true } })
+            return
+          }
+          if (result.status === 'not_installed') {
+            navigate('/game/' + result.appid, { state: { autoLaunch: true } })
+            return
+          }
+        }
+      } catch (e) {
+        console.debug('Enhanced protocol handling not available:', e)
+      }
+      navigate('/game/' + appid, { state: { autoLaunch: true } })
+    }
+
+    const dispatch = async (nav: ProtocolNav | null) => {
       if (!nav) return
       switch (nav.action) {
         case 'run':
           if (nav.appid) {
-            navigate(`/game/${nav.appid}`, { state: { autoLaunch: true } })
+            await handleRunAction(nav.appid)
           }
           break
         case 'store':
           if (nav.appid) {
-            navigate(`/game/${nav.appid}`)
+            navigate('/game/' + nav.appid)
           }
           break
         case 'open': {
-          const route = PAGE_ALIASES[nav.page?.toLowerCase() ?? ''] ?? `/${nav.page ?? ''}`
+          const pg = nav.page?.toLowerCase() || ''
+          const route = PAGE_ALIASES[pg] || '/' + (nav.page || '')
           navigate(route)
           break
         }

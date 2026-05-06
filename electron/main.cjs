@@ -2707,6 +2707,38 @@ ipcMain.handle('uc:protocol-get-pending', () => {
   return nav
 })
 
+ipcMain.handle('uc:protocol-navigate-enhanced', (_event, raw) => {
+  const nav = parseUnionProtocolUrl(raw)
+  if (!nav) return { handled: false }
+
+  // Only 'run' action gets enhanced handling
+  if (nav.action !== 'run' || !nav.appid) {
+    return { handled: false, nav }
+  }
+
+  const appid = nav.appid
+
+  // Check if game is already running
+  const running = getRunningGame(appid)
+  if (running) {
+    ucLog(`Game already running: ${appid} (PID: ${running.pid})`)
+    // Focus the running game window if possible
+    return { handled: true, status: 'running', appid }
+  }
+
+  // Check if game is installed
+  const installed = findInstalledFolderByAppid(appid)
+  if (installed) {
+    ucLog(`Game is installed: ${appid} at ${installed}`)
+    // Return installed status - renderer can then launch
+    return { handled: true, status: 'installed', appid, installedFolder: installed }
+  }
+
+  // Game not installed - prompt for download
+  ucLog(`Game not installed: ${appid} - will prompt for download`)
+  return { handled: true, status: 'not_installed', appid }
+})
+
 // ============================================================
 // Achievement Watcher
 // ============================================================
@@ -2718,6 +2750,12 @@ ipcMain.handle('uc:protocol-get-pending', () => {
 // ============================================================
 
 const achievementWatchers = new Map()  // appid → { watchers, knownState }
+
+// Steam WebAPI key for fetching achievement info from Steam
+
+const STEAM_WEBAPI_KEY = '6E6B90E89880D5FC9E5E48AD274A259F' //this key is vee's, idgaf about it tbh. nothing you can do with it anyways
+
+new Map()  // appid → { watchers, knownState }
 
 function findSteamPath() {
   if (process.platform !== 'win32') return null
@@ -2792,7 +2830,39 @@ function findAchievementFiles(appid) {
   return files
 }
 
-function parseGoldbergAchievements(filePath) {
+
+
+/**
+ * Fetch Steam WebAPI achievement definitions for a game
+ */
+async function fetchSteamAchievementDefinitions(appid) {
+  if (!STEAM_WEBAPI_KEY || !appid) return null
+  try {
+    const resp = await fetch(`https://api.steampowered.com/ISteamUserStats/GetSchemaForGame/v2/?key=${STEAM_WEBAPI_KEY}&appid=${appid}`)
+    if (!resp.ok) return null
+    const data = await resp.json()
+    return data
+  } catch (err) {
+    console.error('Failed to fetch Steam achievement definitions:', err)
+    return null
+  }
+}
+
+/**
+ * Get Steam profile info for a user
+ */
+async function fetchSteamProfile(steamId) {
+  if (!STEAM_WEBAPI_KEY || !steamId) return null
+  try {
+    const resp = await fetch(`https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=${STEAM_WEBAPI_KEY}&steamids=${steamId}`)
+    if (!resp.ok) return null
+    const data = await resp.json()
+    return data?.response?.players?.[0] || null
+  } catch (err) {
+    console.error('Failed to fetch Steam profile:', err)
+    return null
+  }
+}function parseGoldbergAchievements(filePath) {
   try {
     const raw = fs.readFileSync(filePath, 'utf8')
     return JSON.parse(raw)
@@ -2903,6 +2973,24 @@ ipcMain.handle('uc:achievements-get-known', (_event, appid) => {
 ipcMain.handle('uc:achievements-find-files', (_event, appid) => {
   const files = findAchievementFiles(String(appid || ''))
   return { files: files.map(f => typeof f === 'string' ? f : f.dir) }
+})
+
+ipcMain.handle('uc:achievements-get-steam-definitions', async (_event, appid) => {
+  try {
+    const definitions = await fetchSteamAchievementDefinitions(appid)
+    return { ok: true, definitions }
+  } catch (err) {
+    return { ok: false, error: String(err) }
+  }
+})
+
+ipcMain.handle('uc:achievements-get-steam-profile', async (_event, steamId) => {
+  try {
+    const profile = await fetchSteamProfile(steamId)
+    return { ok: true, profile }
+  } catch (err) {
+    return { ok: false, error: String(err) }
+  }
 })
 
 // IPC: simple settings get/set with broadcast when changed
@@ -11515,5 +11603,23 @@ ipcMain.handle('uc:system-notification-activated', async (_event, notificationId
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle('uc:achievements-get-steam-definitions', async (_event, appid) => {
+  try {
+    const definitions = await fetchSteamAchievementDefinitions(appid)
+    return { ok: true, definitions }
+  } catch (err) {
+    return { ok: false, error: String(err) }
+  }
+})
+
+ipcMain.handle('uc:achievements-get-steam-profile', async (_event, steamId) => {
+  try {
+    const profile = await fetchSteamProfile(steamId)
+    return { ok: true, profile }
+  } catch (err) {
+    return { ok: false, error: String(err) }
   }
 })

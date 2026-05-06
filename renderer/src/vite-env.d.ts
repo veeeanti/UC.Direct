@@ -468,6 +468,7 @@ declare global {
     ucProtocol?: {
       getPending: () => Promise<{ action: string; appid?: string | null; page?: string | null; params?: string[] } | null>
       onNavigate: (callback: (nav: { action: string; appid?: string | null; page?: string | null; params?: string[] }) => void) => () => void
+      invoke: (channel: string, ...args: any[]) => Promise<any>
     }
     ucAchievements?: {
       watch: (appid: string) => Promise<{ ok: boolean }>
@@ -475,6 +476,9 @@ declare global {
       getKnown: (appid: string) => Promise<{ ok: boolean; achievements: Record<string, { earned: boolean; earnedAt: number | null; displayName: string; description: string }> }>
       findFiles: (appid: string) => Promise<{ files: string[] }>
       onUnlocked: (callback: (data: { appid: string; name: string; displayName: string; description: string; unlockedAt: number }) => void) => () => void
+      // Steam WebAPI integration
+      getSteamDefinitions: (appid: string) => Promise<{ ok: boolean; definitions: any }>
+      getSteamProfile: (steamId: string) => Promise<{ ok: boolean; profile: any }>
     }
     ucSystem?: {
       getVolume: () => Promise<{ ok: boolean; volume: number }>

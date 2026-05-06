@@ -1,7 +1,7 @@
 {
   "name": "unioncrax-direct",
-  "version": "1.8.5-BETA",
-  "description": "Standalone Electron app for managing and launching games from UnionCrax",
+  "version": "1.8.6-BETA",
+  "description": "UnionCrax.Direct",
   "type": "module",
   "main": "electron/main.cjs",
   "author": "UnionCrax",
