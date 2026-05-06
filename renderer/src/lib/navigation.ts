@@ -10,6 +10,7 @@ import {
   Clock,
   History,
   Camera,
+  Trophy,
 } from "lucide-react"
 
 export type PrimaryNavItem = {
@@ -65,6 +66,12 @@ export const secondaryNavItems: PrimaryNavItem[] = [
     icon: Camera,
     description: "Review in-game captures",
   },
+  {
+    label: "Achievements",
+    to: "/achievements",
+    icon: Trophy,
+    description: "Track your achievement progress",
+  }
 ]
 
 export const bottomNavItems: PrimaryNavItem[] = [
